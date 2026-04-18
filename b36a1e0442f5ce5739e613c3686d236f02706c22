@@ -1,0 +1,29 @@
+ocr_service/model.py
+  e708e70e0774e0e5 61-65
+"The service/07_static_huffman_decompress.py"
+  e708e70e0774e0e5 4-34
+"The service/01_cnn_ocrnet_model.py"
+  e708e70e0774e0e5 61-65
+"The service/06_static_huffman_compress.py"
+  e708e70e0774e0e5 4-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "b36a1e0442f5ce5739e613c3686d236f02706c22",
+  "prompts": {
+    "e708e70e0774e0e5": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "4ecd8da2-9967-403b-9eca-1b5d9d278b93",
+        "model": "composer-2"
+      },
+      "human_author": "pbathuri",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 82,
+      "overriden_lines": 0
+    }
+  }
+}
