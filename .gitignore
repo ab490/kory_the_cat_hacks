@@ -1,3 +1,8 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+.venv/
+venv/
+
+# generated training data (regenerate via synth.py)
+ocr_service/data/

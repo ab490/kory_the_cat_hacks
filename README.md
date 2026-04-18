@@ -1,48 +1,70 @@
-# OCR + Adaptive Huffman (two services)
+# OCR + Adaptive Huffman
 
-Stage 1 (port 5001): PyTorch CNN reads text from an image. Stage 2 (port 5002): adaptive Huffman compresses that text; decompress gets it back losslessly. `pipeline.py` calls both.
+Two microservices and a demo client.
+
+- `ocr_service/` (port 5001): DBNet detector + CRNN/CTC recognizer.
+- `compression_service/` (port 5002): adaptive Huffman compress/decompress.
+- `pipeline.py`: client that runs image -> text -> compressed -> decompressed.
+
+## Architecture
+
+```
+        +---------------+        +--------------------+        +----------------------+
+ image  |  OCR service  |  text  | Compression service|  bits  | Compression service  |
+ ----->|  :5001         |------>|  :5002 /compress   |------>|  :5002 /decompress   |---> text
+        |  DBNet + CRNN |        |  adaptive Huffman  |        |  adaptive Huffman    |
+        +---------------+        +--------------------+        +----------------------+
+                |                          |                              |
+                v                          v                              v
+         boxes + lines           ratio, bits/symbol            recovered == original
+```
 
 ## Setup
 
-Use Python 3 with a venv, then install deps:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-`pip install -r requirements.txt`
+Trained weights ship with the repo at `ocr_service/weights/detector.pt` and
+`ocr_service/weights/recognizer.pt`.
 
-Put `ocrnet.pth` and `denoiser.pth` in `ocr_service/weights/` (both required for `server.py`). Train with the commands below if you need to regenerate them.
+## Run
 
-## Run the pipeline
+```bash
+# terminal 1
+cd ocr_service && python server.py
 
-You need two terminals for the servers, then one for the client.
+# terminal 2
+cd compression_service && python server.py
 
-1. OCR service: `cd ocr_service` then `python3 server.py` (listens on **5001**; override with `PORT=5003` if busy).
+# terminal 3
+python pipeline.py --image path/to/page.png
+```
 
-2. Compression service: `cd compression_service` then `python3 server.py` (listens on **5002**; override with `PORT=` same way).
+Output: OCR text, compression metrics, `lossless: PASS`.
 
-3. From the repo root: `python3 pipeline.py --image path/to/your.png`
+## Layout
 
-You should see extracted text, compression metrics, `Lossless check: PASS`, and total time in ms.
+```
+ocr_service/
+  config.py      charset + sizes
+  model.py       DBNet + CRNN
+  decode.py      CTC decode
+  transforms.py  tensor helpers
+  infer.py       detect + recognize
+  server.py      Flask /ocr
+  weights/       detector.pt, recognizer.pt
+compression_service/
+  huffman.py     adaptive Huffman
+  server.py      Flask /compress, /decompress
+pipeline.py      end-to-end client
+benchmark.py     OCR sweep over SimulatedNoisyOffice
+```
 
-Optional: `python3 pipeline.py --image test_alpha.png --noise-profile gaussian` to add noise before OCR (also `salt_and_pepper`, `sidd`). If servers use other ports: `--ocr-url http://localhost:5003 --compression-url http://localhost:5004`.
+## Benchmark (optional)
 
-## Train or retrain models
-
-OCR (downloads EMNIST into `../data`, saves `ocr_service/weights/ocrnet.pth` and `metrics.json`):
-
-`cd ocr_service && python3 train.py --epochs 25`
-
-Training also pulls TrueType fonts from Hugging Face (`jonathang/fonts-ttf`); the first run may download them into the Hugging Face cache.
-
-Denoiser (needs `SimulatedNoisyOffice` next to or under the repo; saves `denoiser.pth`):
-
-`cd ocr_service && python3 train_denoiser.py --data-dir ../SimulatedNoisyOffice --epochs 50`
-
-## What’s where
-
-- `ocr_service/` — CNN, denoiser, segmentation, Flask `server.py`, `train.py`, `train_denoiser.py`
-- `compression_service/` — `huffman.py` (encoder/decoder), Flask `server.py`
-- `pipeline.py` — end-to-end client
-- `benchmark.py` — OCR-only benchmark against NoisyOffice images (server must be up)
-
-## Demo for judges
-
-Start both servers, run `pipeline.py` on a sample image, show the printed output and that lossless recovery passes.
+With `SimulatedNoisyOffice/` next to the repo, start the OCR server and
+run `python benchmark.py`. Prints average character-match rate between
+each font's clean TE page and its four noisy variants.

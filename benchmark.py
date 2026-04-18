@@ -1,5 +1,3 @@
-# OCR benchmark: SimulatedNoisyOffice TE clean vs noisy. Needs OCR server on :5001.
-
 import os
 import requests
 

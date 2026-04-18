@@ -1,9 +1,7 @@
-torch
+torch>=2.0
 torchvision
-flask
-pillow
 numpy
-scipy
+pillow
+opencv-python
+flask
 requests
-tqdm
-huggingface_hub

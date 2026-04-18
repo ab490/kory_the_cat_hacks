@@ -1,5 +1,3 @@
-# Stage 2: POST /compress, POST /decompress, GET /health — adaptive Huffman in huffman.py
-
 import os
 import time
 from flask import Flask, request, jsonify
@@ -25,8 +23,7 @@ def compress():
 
     request_start_time_seconds = time.time()
     compressed_bytes, encoded_bit_length = encode(plain_text)
-    server_latency_milliseconds = (
-        time.time() - request_start_time_seconds) * 1000
+    server_latency_milliseconds = (time.time() - request_start_time_seconds) * 1000
 
     metrics = compute_metrics(plain_text, compressed_bytes, encoded_bit_length)
 
@@ -49,8 +46,7 @@ def decompress():
     recovered_plain_text = decode(
         compressed_bytes, request_json_body["bit_length"]
     )
-    server_latency_milliseconds = (
-        time.time() - request_start_time_seconds) * 1000
+    server_latency_milliseconds = (time.time() - request_start_time_seconds) * 1000
 
     return jsonify({
         "text": recovered_plain_text,
