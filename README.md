@@ -1,3 +1,6 @@
+Youtube Link to pipeline function shown - https://youtu.be/Lx248pC56JM
+
+
 # OCR + Adaptive Huffman
 
 Two microservices and a demo client.
