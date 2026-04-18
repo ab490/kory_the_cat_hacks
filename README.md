@@ -2,6 +2,25 @@
 
 A two-stage pipeline that ingests a noisy scanned document image, extracts its text using a CNN-based OCR model, and compresses the output using adaptive Huffman encoding - delivered as two communicating microservices.
 
+## Table of Contents
+
+- [Pipeline Overview](#pipeline-overview)
+- [Repository Structure](#repository-structure)
+- [Setup](#setup)
+- [Training](#training)
+- [Running the Full Pipeline](#running-the-full-pipeline)
+- [Stage 1 - OCR Microservice](#stage-1---ocr-microservice)
+  - [OCRNet Architecture](#ocrnet-architecture)
+  - [Design Justifications](#design-justifications)
+  - [Character Segmentation](#character-segmentation)
+  - [DnCNN Denoiser](#dncnn-denoiser)
+- [Stage 2 - Compression Microservice](#stage-2---compression-microservice)
+  - [Compression Metrics](#compression-metrics)
+  - [API](#api)
+- [End-to-End Latency](#end-to-end-latency)
+- [Requirements Checklist](#requirements-checklist)
+- [Team](#team)
+
 ---
 
 ## Pipeline Overview
@@ -46,6 +65,10 @@ Noisy Document Image
 │   ├── Chars74K/Fnt/         
 │   ├── SimulatedNoisyOffice/ 
 │   └── RealNoisyOffice/      
+├── results/
+│   ├── pipeline_result.txt   # Sample end-to-end pipeline run output
+│   ├── nohup_train.log       # OCR model training log
+│   └── nohup_denoiser.log    # Denoiser training log
 ├── pipeline.py               # End-to-end orchestrator
 └── requirements.txt
 ```
@@ -108,23 +131,6 @@ curl http://localhost:5002/health
 
 ```bash
 python3 pipeline.py --image data/SimulatedNoisyOffice/simulated_noisy_images_grayscale/Fontfre_Noisec_TE.png
-```
-
-### Direct API calls
-
-```bash
-# OCR
-curl -X POST http://localhost:5001/ocr -F "image=@image.png"
-
-# Compress
-curl -X POST http://localhost:5002/compress \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Hello World 1234"}'
-
-# Decompress
-curl -X POST http://localhost:5002/decompress \
-  -H "Content-Type: application/json" \
-  -d '{"data": "<hex_string>", "bit_length": <N>}'
 ```
 
 ---
@@ -211,20 +217,13 @@ curl -X POST http://localhost:5002/decompress \
 | **MaxPool2d(2×2)** | Halves spatial dimensions at each block; provides translation invariance to segmentation misalignments |
 | **Dropout2d(0.15) in conv blocks** | Drops entire feature maps - stronger spatial regularisation; kept low because noise augmentation already regularises |
 | **FC layers: 512->256->62** | Single 1152->62 projection underfit; two hidden layers needed for 62-class complexity |
-| **LogSoftmax + NLLLoss** | Numerically equivalent to CrossEntropyLoss but separates log-probability monitoring from loss |
+| **LogSoftmax + NLLLoss** | Equivalent to CrossEntropyLoss but separates log-probability monitoring from loss |
 | **ReLU activations** | Avoids vanishing gradient vs sigmoid/tanh; computationally efficient |
 
-**Validation accuracy (Chars74K 15% hold-out, epoch 45/50):**
-
-| Noise profile | Accuracy |
-|---|---|
-| Clean | 89.50% |
-| Gaussian | 88.77% |
-| Salt-and-pepper | 89.24% |
 
 ### Character Segmentation
 
-`segment.py` - fully from-scratch connected-component segmentation (no OCR or CV libraries).
+`segment.py`: fully from-scratch connected-component segmentation.
 
 Otsu threshold (from scratch) -> binarize -> `scipy.ndimage.label()` -> resolution-adaptive size filter -> reading-order sort -> 28×28 crops. All thresholds scale with image resolution so the same code handles 28×28 crops and full 540×420 page scans.
 
@@ -239,7 +238,7 @@ Conv(1->64, 3×3) -> ReLU
 × 8: Conv(64->64, 3×3) -> BN -> ReLU
 Conv(64->1, 3×3)
 
-Output = clamp(Input − predicted_noise, 0.0, 1.0)
+Output = clamp(Input - predicted_noise, 0.0, 1.0)
 ```
 
 Trained on paired (noisy, clean) SimulatedNoisyOffice TR images. If the denoised output has std < 0.05 (contrast collapse), the pipeline falls back to the original image.
@@ -248,16 +247,14 @@ Trained on paired (noisy, clean) SimulatedNoisyOffice TR images. If the denoised
 
 ## Stage 2 - Compression Microservice
 
-`compression_service/huffman.py` - Vitter's 1987 adaptive Huffman algorithm, from scratch. No compression libraries used.
-
-Encoder and decoder both build the same tree symbol-by-symbol as they process data - no frequency pre-scan, no transmitted frequency table.
+`compression_service/huffman.py` - Vitter's adaptive Huffman algorithm, from scratch.
 
 ### Compression Metrics
 
 | Metric | Formula | Meaning |
 |---|---|---|
 | Compression ratio | `original_bits / compressed_bits` | >1.0 means file is smaller |
-| Entropy | `−Σ p(c) log₂ p(c)` | Theoretical minimum bits per symbol (Shannon) |
+| Entropy | `-Σ p(c) log₂ p(c)` | Theoretical minimum bits per symbol (Shannon) |
 | Avg bits/symbol | `compressed_bits / num_chars` | Actual bits used per character |
 | Encoding efficiency | `entropy / avg_bits_per_symbol` | 1.0 = theoretically optimal |
 
@@ -295,27 +292,38 @@ Response: {"text": "Hello World", "latency_ms": 0.03}
 |---|---|---|
 | Stage 1 | DnCNN denoiser | ~200 ms |
 | Stage 1 | Segmentation (Otsu + connected components) | ~50 ms |
-| Stage 1 | OCRNet inference (batched) | ~350 ms |
-| **Stage 1 total** | | **~600 ms** |
-| Stage 2 | Compress | ~0.04 ms |
-| Stage 2 | Decompress | ~0.03 ms |
-| **End-to-end** | | **~620 ms** |
+| Stage 1 | OCRNet inference (batched) | ~227 ms |
+| **Stage 1 total** | | **476.89 ms** |
+| Stage 2 | Compress | 10.84 ms |
+| Stage 2 | Decompress | 11.01 ms |
+| **End-to-end** | | **509.97 ms** |
 
 ---
 
-## Graduate Requirements Checklist
+## Requirements Checklist
 
-- [x] CNN trained from scratch using PyTorch
-- [x] OCR microservice exposes `POST /ocr` accepting image, returning text
-- [x] Adaptive Huffman implemented entirely from scratch (no zlib/gzip)
-- [x] Compression microservice exposes `POST /compress` and `POST /decompress`
+### Stage 1 — OCR Microservice (CNN)
+- [x] CNN built and trained from scratch using PyTorch (no pretrained models)
+- [x] `POST /ocr` endpoint accepts an image and returns extracted text
+- [x] Two noise profiles supported with measurable accuracy on each:
+
+| Noise profile | Chars74K val accuracy |
+|---|---|
+| Clean | 89.50% |
+| Gaussian | 88.77% |
+| Salt-and-pepper | 89.24% |
+
+- [x] CNN architecture documented with diagram and design justification — see [OCRNet Architecture](#ocrnet-architecture)
+
+### Stage 2 — Compression Microservice (Adaptive Huffman)
+- [x] Adaptive Huffman implemented entirely from scratch (no zlib/gzip/compression libs)
+- [x] `POST /compress` and `POST /decompress` endpoints implemented
 - [x] Lossless decompression verified (`recovered == original` assert in `pipeline.py`)
-- [x] Two noise profiles: Gaussian + salt-and-pepper, accuracy logged per epoch
-- [x] SIDD noise profile supported (`noise.py`) for real-world evaluation
-- [x] Compression ratio, entropy, and encoding efficiency reported per request
-- [x] End-to-end latency benchmarked and reported above
-- [x] CNN architecture documented with diagram and design justification table
-- [ ] Record demo video (image in -> compressed output -> decompressed text)
+- [x] Compression ratio, entropy, and encoding efficiency reported per `/compress` response — see [Compression Metrics](#compression-metrics)
+
+### Pipeline
+- [x] End-to-end latency benchmarked — see [End-to-End Latency](#end-to-end-latency) (~620 ms total)
+- [ ] Demo video (image in → compressed output → decompressed text)
 
 ---
 
