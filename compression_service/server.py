@@ -1,10 +1,6 @@
-"""
-Compression Microservice - Stage 2
-POST /compress   : accepts JSON {"text": "..."}, returns compressed bytes + metrics
-POST /decompress : accepts JSON {"data": "<hex>", "bit_length": N}, returns original text
-GET  /health     : liveness check
-"""
+# Stage 2: POST /compress, POST /decompress, GET /health — adaptive Huffman in huffman.py
 
+import os
 import time
 from flask import Flask, request, jsonify
 from huffman import encode, decode, compute_metrics
@@ -19,44 +15,49 @@ def health():
 
 @app.route("/compress", methods=["POST"])
 def compress():
-    body = request.get_json(force=True)
-    if "text" not in body:
+    request_json_body = request.get_json(force=True)
+    if "text" not in request_json_body:
         return jsonify({"error": "missing 'text' field"}), 400
 
-    text = body["text"]
-    if not text:
+    plain_text = request_json_body["text"]
+    if not plain_text:
         return jsonify({"error": "empty text"}), 400
 
-    t0 = time.time()
-    compressed, bit_length = encode(text)
-    latency_ms = (time.time() - t0) * 1000
+    request_start_time_seconds = time.time()
+    compressed_bytes, encoded_bit_length = encode(plain_text)
+    server_latency_milliseconds = (
+        time.time() - request_start_time_seconds) * 1000
 
-    metrics = compute_metrics(text, compressed, bit_length)
+    metrics = compute_metrics(plain_text, compressed_bytes, encoded_bit_length)
 
     return jsonify({
-        "data": compressed.hex(),
-        "bit_length": bit_length,
+        "data": compressed_bytes.hex(),
+        "bit_length": encoded_bit_length,
         "metrics": metrics,
-        "latency_ms": round(latency_ms, 2),
+        "latency_ms": round(server_latency_milliseconds, 2),
     })
 
 
 @app.route("/decompress", methods=["POST"])
 def decompress():
-    body = request.get_json(force=True)
-    if "data" not in body or "bit_length" not in body:
+    request_json_body = request.get_json(force=True)
+    if "data" not in request_json_body or "bit_length" not in request_json_body:
         return jsonify({"error": "missing 'data' or 'bit_length'"}), 400
 
-    t0 = time.time()
-    compressed = bytes.fromhex(body["data"])
-    text = decode(compressed, body["bit_length"])
-    latency_ms = (time.time() - t0) * 1000
+    request_start_time_seconds = time.time()
+    compressed_bytes = bytes.fromhex(request_json_body["data"])
+    recovered_plain_text = decode(
+        compressed_bytes, request_json_body["bit_length"]
+    )
+    server_latency_milliseconds = (
+        time.time() - request_start_time_seconds) * 1000
 
     return jsonify({
-        "text": text,
-        "latency_ms": round(latency_ms, 2),
+        "text": recovered_plain_text,
+        "latency_ms": round(server_latency_milliseconds, 2),
     })
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5002, debug=False)
+    port = int(os.environ.get("PORT", "5002"))
+    app.run(host="0.0.0.0", port=port, debug=False)

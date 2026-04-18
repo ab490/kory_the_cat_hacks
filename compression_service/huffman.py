@@ -1,262 +1,284 @@
-"""
-Adaptive Huffman Encoding - Vitter's Algorithm
-"""
+# Adaptive Huffman (FGK / Vitter): tree updates per symbol; NYT = not-yet-transmitted escape.
 
-from __future__ import annotations
 import math
-from dataclasses import dataclass, field
-from typing import Optional
+from collections import Counter
 
 
-@dataclass
-class Node:
-    weight: int = 0
-    symbol: Optional[str] = None      
-    is_nyt: bool = False
-    parent: Optional["Node"] = field(default=None, repr=False)
-    left: Optional["Node"] = field(default=None, repr=False)
-    right: Optional["Node"] = field(default=None, repr=False)
-    order: int = 0                
+class HuffmanTreeNode:
+    """One node in the adaptive Huffman tree (internal split or leaf)."""
+
+    def __init__(
+        self,
+        symbol_frequency=0,
+        symbol_character=None,
+        is_not_yet_transmitted_escape=False,
+        tree_order_index=0,
+        parent_node=None,
+    ):
+        self.symbol_frequency = symbol_frequency
+        self.symbol_character = symbol_character
+        self.is_not_yet_transmitted_escape = is_not_yet_transmitted_escape
+        self.parent_node = parent_node
+        self.left_child = None
+        self.right_child = None
+        self.tree_order_index = tree_order_index
 
 
 class AdaptiveHuffmanTree:
+    """Vitter-style adaptive coding: new symbols emit NYT path plus 8-bit ASCII."""
+
     def __init__(self):
-        self._reset()
+        self.not_yet_transmitted_escape_node = HuffmanTreeNode(
+            symbol_frequency=0,
+            is_not_yet_transmitted_escape=True,
+            tree_order_index=0,
+        )
+        self.root_node = self.not_yet_transmitted_escape_node
+        self.symbol_character_to_leaf_node = {}
+        self._next_tree_order_index = 1
 
-    def _reset(self):
-        self.nyt = Node(weight=0, is_nyt=True, order=0)
-        self.root = self.nyt
-        self.symbol_nodes: dict[str, Node] = {}
-        self._order_counter = 1
-        self._blocks: dict[int, list[Node]] = {0: [self.nyt]}
+    def _allocate_next_tree_order_index(self):
+        assigned_index = self._next_tree_order_index
+        self._next_tree_order_index += 1
+        return assigned_index
 
-    def _new_order(self) -> int:
-        o = self._order_counter
-        self._order_counter += 1
-        return o
-
-    def _block_add(self, node: Node):
-        self._blocks.setdefault(node.weight, []).append(node)
-
-    def _block_remove(self, node: Node):
-        lst = self._blocks.get(node.weight, [])
-        try:
-            lst.remove(node)
-        except ValueError:
-            pass
-        if not lst:
-            self._blocks.pop(node.weight, None)
-
-
-    def _path_to_root(self, node: Node) -> list[int]:
-        bits = []
-        while node.parent is not None:
-            parent = node.parent
-            bits.append(0 if parent.left is node else 1)
-            node = parent
-        return bits[::-1]
-
-    def _find_highest_in_block(self, node: Node) -> Node:
-        candidates = self._blocks.get(node.weight, [])
-        best = node
-
-        ancestors = set()
-        anc = node.parent
-        while anc is not None:
-            ancestors.add(id(anc))
-            anc = anc.parent
-
-        for cur in candidates:
-            if cur is node:
-                continue
-            if id(cur) in ancestors:
-                continue
-            if cur.order <= best.order:
-                continue
-
-            is_desc = False
-            anc = cur.parent
-            while anc is not None:
-                if anc is node:
-                    is_desc = True
-                    break
-                anc = anc.parent
-            if not is_desc:
-                best = cur
-        return best
-
-    def _swap_nodes(self, a: Node, b: Node):
-        if a is b:
-            return
-
-        a_parent, b_parent = a.parent, b.parent
-
-        if a_parent.left is a:
-            a_parent.left = b
-        else:
-            a_parent.right = b
-
-        if b_parent.left is b:
-            b_parent.left = a
-        else:
-            b_parent.right = a
-
-        a.parent, b.parent = b_parent, a_parent
-        a.order, b.order = b.order, a.order
-
-    def update(self, symbol: str):
-        if symbol in self.symbol_nodes:
-            node = self.symbol_nodes[symbol]
-        else:
-            internal = Node(
-                weight=0,
-                order=self.nyt.order,
-                parent=self.nyt.parent,
-            )
-            new_symbol = Node(
-                weight=0,
-                symbol=symbol,
-                order=self._new_order(),
-                parent=internal,
-            )
-            new_nyt = Node(
-                weight=0,
-                is_nyt=True,
-                order=self._new_order(),
-                parent=internal,
-            )
-            internal.left = new_nyt
-            internal.right = new_symbol
-
-            if self.nyt.parent is not None:
-                if self.nyt.parent.left is self.nyt:
-                    self.nyt.parent.left = internal
-                else:
-                    self.nyt.parent.right = internal
+    def _collect_bits_from_root_to_node(self, target_node):
+        """Bits from root to leaf: 0 = left_child, 1 = right_child."""
+        bits_from_root_to_leaf = []
+        current_node = target_node
+        while current_node.parent_node is not None:
+            parent_node = current_node.parent_node
+            if parent_node.left_child is current_node:
+                bits_from_root_to_leaf.append(0)
             else:
-                self.root = internal
+                bits_from_root_to_leaf.append(1)
+            current_node = parent_node
+        bits_from_root_to_leaf.reverse()
+        return bits_from_root_to_leaf
 
-            self._block_remove(self.nyt)
-            self._block_add(internal)
-            self._block_add(new_symbol)
-            self._block_add(new_nyt)
+    def _collect_all_nodes_preorder(self):
+        all_nodes = []
+        stack = [self.root_node]
+        while len(stack) > 0:
+            current_node = stack.pop()
+            all_nodes.append(current_node)
+            if current_node.left_child is not None:
+                stack.append(current_node.left_child)
+            if current_node.right_child is not None:
+                stack.append(current_node.right_child)
+        return all_nodes
 
-            self.nyt = new_nyt
-            self.symbol_nodes[symbol] = new_symbol
-            node = new_symbol
+    def _is_first_node_ancestor_of_second(self, potential_ancestor, descendant):
+        walk_node = descendant.parent_node
+        while walk_node is not None:
+            if walk_node is potential_ancestor:
+                return True
+            walk_node = walk_node.parent_node
+        return False
 
-        while node is not None:
-            highest = self._find_highest_in_block(node)
-            if (highest is not node
-                    and highest is not node.parent
-                    and node.parent is not None
-                    and highest.parent is not None):
-                self._swap_nodes(node, highest)
+    def _find_highest_tree_order_in_same_frequency_block(self, node):
+        block_frequency = node.symbol_frequency
+        best_candidate_node = node
+        for candidate_node in self._collect_all_nodes_preorder():
+            if candidate_node.symbol_frequency != block_frequency or candidate_node is node:
+                continue
+            if self._is_first_node_ancestor_of_second(candidate_node, node):
+                continue
+            if self._is_first_node_ancestor_of_second(node, candidate_node):
+                continue
+            if candidate_node.tree_order_index > best_candidate_node.tree_order_index:
+                best_candidate_node = candidate_node
+        return best_candidate_node
 
-            self._block_remove(node)
-            node.weight += 1
-            self._block_add(node)
-            node = node.parent
-
-
-    def encode_symbol(self, symbol: str) -> list[int]:
-        if symbol in self.symbol_nodes:
-            return self._path_to_root(self.symbol_nodes[symbol])
+    def _swap_two_subtree_nodes(self, first_node, second_node):
+        if first_node is second_node:
+            return
+        first_parent = first_node.parent_node
+        second_parent = second_node.parent_node
+        if first_parent is not None and first_parent is second_parent:
+            shared_parent = first_parent
+            if shared_parent.left_child is first_node and shared_parent.right_child is second_node:
+                shared_parent.left_child, shared_parent.right_child = (
+                    second_node,
+                    first_node,
+                )
+            elif shared_parent.left_child is second_node and shared_parent.right_child is first_node:
+                shared_parent.left_child, shared_parent.right_child = (
+                    first_node,
+                    second_node,
+                )
+            first_node.parent_node = shared_parent
+            second_node.parent_node = shared_parent
+            first_node.tree_order_index, second_node.tree_order_index = (
+                second_node.tree_order_index,
+                first_node.tree_order_index,
+            )
+            return
+        if first_parent.left_child is first_node:
+            first_parent.left_child = second_node
         else:
-            # NYT code + 8-bit ASCII of new symbol
-            nyt_code = self._path_to_root(self.nyt)
-            ascii_bits = [(ord(symbol) >> (7 - i)) & 1 for i in range(8)]
-            return nyt_code + ascii_bits
+            first_parent.right_child = second_node
+        if second_parent.left_child is second_node:
+            second_parent.left_child = first_node
+        else:
+            second_parent.right_child = first_node
+        first_node.parent_node, second_node.parent_node = second_parent, first_parent
+        first_node.tree_order_index, second_node.tree_order_index = (
+            second_node.tree_order_index,
+            first_node.tree_order_index,
+        )
 
-    def decode_step(self, bits: list[int], pos: int) -> tuple[str, int]:
+    def update_after_symbol(self, symbol_character):
+        if symbol_character in self.symbol_character_to_leaf_node:
+            current_node = self.symbol_character_to_leaf_node[symbol_character]
+        else:
+            internal_split_node = HuffmanTreeNode(
+                symbol_frequency=0,
+                tree_order_index=self.not_yet_transmitted_escape_node.tree_order_index,
+                parent_node=self.not_yet_transmitted_escape_node.parent_node,
+            )
+            new_symbol_leaf_node = HuffmanTreeNode(
+                symbol_frequency=0,
+                symbol_character=symbol_character,
+                tree_order_index=self._allocate_next_tree_order_index(),
+                parent_node=internal_split_node,
+            )
+            new_escape_leaf_node = HuffmanTreeNode(
+                symbol_frequency=0,
+                is_not_yet_transmitted_escape=True,
+                tree_order_index=self._allocate_next_tree_order_index(),
+                parent_node=internal_split_node,
+            )
+            internal_split_node.left_child = new_escape_leaf_node
+            internal_split_node.right_child = new_symbol_leaf_node
+            if self.not_yet_transmitted_escape_node.parent_node is not None:
+                parent_of_escape = self.not_yet_transmitted_escape_node.parent_node
+                if parent_of_escape.left_child is self.not_yet_transmitted_escape_node:
+                    parent_of_escape.left_child = internal_split_node
+                else:
+                    parent_of_escape.right_child = internal_split_node
+            else:
+                self.root_node = internal_split_node
+            self.not_yet_transmitted_escape_node = new_escape_leaf_node
+            self.symbol_character_to_leaf_node[symbol_character] = new_symbol_leaf_node
+            current_node = new_symbol_leaf_node
 
-        node = self.root
-        # If tree is empty (first symbol), read raw 8-bit ASCII
-        if node is self.nyt:
-            byte = 0
-            for i in range(8):
-                byte = (byte << 1) | bits[pos + i]
-            return chr(byte), pos + 8
+        while current_node is not None:
+            highest_in_block = self._find_highest_tree_order_in_same_frequency_block(
+                current_node
+            )
+            if highest_in_block is not current_node and highest_in_block is not current_node.parent_node:
+                if current_node.parent_node is not None and highest_in_block.parent_node is not None:
+                    self._swap_two_subtree_nodes(current_node, highest_in_block)
+            current_node.symbol_frequency += 1
+            current_node = current_node.parent_node
 
-        while node.left is not None or node.right is not None:
-            if pos >= len(bits):
-                raise ValueError("Unexpected end of bitstream")
-            bit = bits[pos]
-            pos += 1
-            node = node.left if bit == 0 else node.right
+    def encode_symbol_to_bits(self, symbol_character):
+        if symbol_character in self.symbol_character_to_leaf_node:
+            return self._collect_bits_from_root_to_node(
+                self.symbol_character_to_leaf_node[symbol_character]
+            )
+        not_yet_transmitted_bits = self._collect_bits_from_root_to_node(
+            self.not_yet_transmitted_escape_node
+        )
+        ascii_bits_eight = []
+        character_code_point = ord(symbol_character)
+        for bit_position in range(8):
+            ascii_bits_eight.append((character_code_point >> (7 - bit_position)) & 1)
+        return not_yet_transmitted_bits + ascii_bits_eight
 
-        if node.is_nyt:
-            # Next 8 bits are the raw ASCII
-            byte = 0
-            for i in range(8):
-                byte = (byte << 1) | bits[pos + i]
-            return chr(byte), pos + 8
-
-        return node.symbol, pos
-
-
-def encode(text: str) -> tuple[bytes, int]:
-    tree = AdaptiveHuffmanTree()
-    bits = []
-    for ch in text:
-        bits.extend(tree.encode_symbol(ch))
-        tree.update(ch)
-
-    original_bit_length = len(bits)
-    # Pad to byte boundary
-    pad = (8 - len(bits) % 8) % 8
-    bits.extend([0] * pad)
-
-    compressed = bytearray()
-    for i in range(0, len(bits), 8):
-        byte = 0
-        for j in range(8):
-            byte = (byte << 1) | bits[i + j]
-        compressed.append(byte)
-
-    return bytes(compressed), original_bit_length
-
-
-def decode(compressed: bytes, original_bit_length: int) -> str:
-    bits = []
-    for byte in compressed:
-        for i in range(7, -1, -1):
-            bits.append((byte >> i) & 1)
-
-    bits = bits[:original_bit_length]
-
-    tree = AdaptiveHuffmanTree()
-    result = []
-    pos = 0
-    while pos < len(bits):
-        symbol, pos = tree.decode_step(bits, pos)
-        tree.update(symbol)
-        result.append(symbol)
-
-    return "".join(result)
+    def decode_one_symbol_from_bitstream(self, bitstream_bits, start_bit_index):
+        current_node = self.root_node
+        if current_node is self.not_yet_transmitted_escape_node:
+            decoded_byte = 0
+            for offset in range(8):
+                decoded_byte = (decoded_byte << 1) | bitstream_bits[start_bit_index + offset]
+            return chr(decoded_byte), start_bit_index + 8
+        while current_node.left_child is not None or current_node.right_child is not None:
+            if start_bit_index >= len(bitstream_bits):
+                raise ValueError("truncated bitstream")
+            next_bit = bitstream_bits[start_bit_index]
+            start_bit_index += 1
+            if next_bit == 0:
+                current_node = current_node.left_child
+            else:
+                current_node = current_node.right_child
+        if current_node.is_not_yet_transmitted_escape:
+            decoded_byte = 0
+            for offset in range(8):
+                decoded_byte = (decoded_byte << 1) | bitstream_bits[start_bit_index + offset]
+            return chr(decoded_byte), start_bit_index + 8
+        return current_node.symbol_character, start_bit_index
 
 
-def compute_metrics(text: str, compressed: bytes, original_bit_length: int) -> dict:
-    original_bits = len(text) * 8
-    compressed_bits = original_bit_length
+def encode(plain_text):
+    adaptive_tree = AdaptiveHuffmanTree()
+    encoded_bits = []
+    for character in plain_text:
+        encoded_bits.extend(adaptive_tree.encode_symbol_to_bits(character))
+        adaptive_tree.update_after_symbol(character)
+    total_encoded_bit_count = len(encoded_bits)
+    padding_bit_count = (8 - total_encoded_bit_count % 8) % 8
+    for _ in range(padding_bit_count):
+        encoded_bits.append(0)
+    packed_bytes = bytearray()
+    bit_index = 0
+    while bit_index < len(encoded_bits):
+        packed_byte = 0
+        for inner in range(8):
+            packed_byte = (packed_byte << 1) | encoded_bits[bit_index + inner]
+        packed_bytes.append(packed_byte)
+        bit_index += 8
+    return bytes(packed_bytes), total_encoded_bit_count
 
-    compression_ratio = original_bits / compressed_bits if compressed_bits > 0 else 1.0
 
-    # Shannon entropy
-    from collections import Counter
-    freq = Counter(text)
-    n = len(text)
-    entropy = -sum((c / n) * math.log2(c / n) for c in freq.values() if c > 0)
+def decode(compressed_bytes, original_bit_length_without_padding):
+    bitstream_bits = []
+    for single_byte in compressed_bytes:
+        for bit_position in range(7, -1, -1):
+            bitstream_bits.append((single_byte >> bit_position) & 1)
+    bitstream_bits = bitstream_bits[:original_bit_length_without_padding]
 
-    # Encoding efficiency = entropy / avg_bits_per_symbol
-    avg_bits = compressed_bits / n if n > 0 else 0
-    efficiency = (entropy / avg_bits) if avg_bits > 0 else 0.0
+    adaptive_tree = AdaptiveHuffmanTree()
+    decoded_characters = []
+    current_bit_index = 0
+    while current_bit_index < len(bitstream_bits):
+        decoded_symbol, current_bit_index = adaptive_tree.decode_one_symbol_from_bitstream(
+            bitstream_bits, current_bit_index
+        )
+        adaptive_tree.update_after_symbol(decoded_symbol)
+        decoded_characters.append(decoded_symbol)
+    return "".join(decoded_characters)
+
+
+def compute_metrics(plain_text, compressed_bytes, original_bit_length_without_padding):
+    original_bit_count = len(plain_text) * 8
+    compressed_bit_count = original_bit_length_without_padding
+    if compressed_bit_count > 0:
+        compression_ratio = original_bit_count / compressed_bit_count
+    else:
+        compression_ratio = 1.0
+
+    symbol_frequency_counter = Counter(plain_text)
+    text_length = len(plain_text)
+    shannon_entropy_bits_per_symbol = 0.0
+    for character in symbol_frequency_counter:
+        probability = symbol_frequency_counter[character] / text_length
+        shannon_entropy_bits_per_symbol -= probability * math.log2(probability)
+
+    average_encoded_bits_per_symbol = (
+        compressed_bit_count / text_length if text_length > 0 else 0.0
+    )
+    if average_encoded_bits_per_symbol > 0:
+        encoding_efficiency = shannon_entropy_bits_per_symbol / average_encoded_bits_per_symbol
+    else:
+        encoding_efficiency = 0.0
 
     return {
-        "original_bytes": len(text),
-        "compressed_bytes": len(compressed),
+        "original_bytes": len(plain_text),
+        "compressed_bytes": len(compressed_bytes),
         "compression_ratio": round(compression_ratio, 4),
-        "entropy_bits_per_symbol": round(entropy, 4),
-        "avg_bits_per_symbol": round(avg_bits, 4),
-        "encoding_efficiency": round(efficiency, 4),
+        "entropy_bits_per_symbol": round(shannon_entropy_bits_per_symbol, 4),
+        "avg_bits_per_symbol": round(average_encoded_bits_per_symbol, 4),
+        "encoding_efficiency": round(encoding_efficiency, 4),
     }

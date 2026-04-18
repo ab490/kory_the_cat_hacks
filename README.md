@@ -292,11 +292,11 @@ Response: {"text": "Hello World", "latency_ms": 0.03}
 |---|---|---|
 | Stage 1 | DnCNN denoiser | ~200 ms |
 | Stage 1 | Segmentation (Otsu + connected components) | ~50 ms |
-| Stage 1 | OCRNet inference (batched) | ~227 ms |
-| **Stage 1 total** | | **476.89 ms** |
-| Stage 2 | Compress | 10.84 ms |
-| Stage 2 | Decompress | 11.01 ms |
-| **End-to-end** | | **509.97 ms** |
+| Stage 1 | OCRNet inference (batched) | ~373 ms |
+| **Stage 1 total** | | **622.88 ms** |
+| Stage 2 | Compress | 39.22 ms |
+| Stage 2 | Decompress | 39.30 ms |
+| **End-to-end** | | **713.21 ms** |
 
 ---
 
