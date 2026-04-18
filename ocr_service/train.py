@@ -23,7 +23,7 @@ from tqdm import tqdm
 from model import OCRNet
 from noise import gaussian_noise, salt_and_pepper_noise
 
-DATA_DIR   = os.path.join(os.path.dirname(__file__), "../data/English/Fnt")
+DATA_DIR   = os.path.join(os.path.dirname(__file__), "../data/Chars74K/Fnt")
 WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "weights", "ocrnet.pth")
 METRICS_PATH = os.path.join(os.path.dirname(__file__), "weights", "metrics.json")
 
