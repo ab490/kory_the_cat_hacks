@@ -1,130 +1,125 @@
-"""
-Connected-component character segmentation.
-
-Steps:
-  1. Binarize image with Otsu's threshold
-  2. Label connected ink blobs
-  3. Filter blobs by size
-  4. Sort blobs reading-order (top-to-bottom, left-to-right by line)
-  5. Return list of individual character crops as PIL Images
-"""
+# Otsu binarize + horizontal lines + vertical chars -> 28x28 PIL crops for OCRNet.
 
 import numpy as np
 from PIL import Image
-from scipy import ndimage
 
 
-def segment_characters(image: Image.Image,
-                       min_area: int = None,
-                       min_width: int = None,
-                       max_area: int = None) -> list:
-    gray = np.array(image.convert("L"), dtype=np.float32)
-    h, w = gray.shape
+def binarize(grayscale_uint8_array):
+    # Otsu: maximize between-class variance between ink/paper (histogram on 256 bins)
+    intensity_histogram = np.bincount(grayscale_uint8_array.flatten(), minlength=256)
+    total_pixel_count = grayscale_uint8_array.size
+    weighted_intensity_sum = 0
+    for intensity_level in range(256):
+        weighted_intensity_sum += intensity_level * intensity_histogram[intensity_level]
 
-    total_pixels = h * w
-    if min_area is None:
-        min_area = max(20, int(total_pixels * 0.00015))
-    if min_width is None:
-        min_width = max(3, int(w * 0.003))
-    if max_area is None:
-        max_area = int(total_pixels * 0.02)
-
-    threshold = _otsu_threshold(gray)
-    if gray.mean() > 127:
-        binary = (gray < threshold).astype(np.uint8)
-    else:
-        binary = (gray > threshold).astype(np.uint8)
-
-    labeled, num_features = ndimage.label(binary)
-    if num_features == 0:
-        return []
-
-    objects = ndimage.find_objects(labeled)
-
-    boxes = []
-    for slc in objects:
-        if slc is None:
+    best_intensity_threshold = 0
+    best_between_class_variance = 0.0
+    class0_pixel_count = 0
+    class0_weighted_sum = 0
+    for intensity_threshold in range(256):
+        class0_pixel_count += intensity_histogram[intensity_threshold]
+        class1_pixel_count = total_pixel_count - class0_pixel_count
+        if class0_pixel_count == 0 or class1_pixel_count == 0:
             continue
-        row_slice, col_slice = slc
-        bh = row_slice.stop - row_slice.start
-        bw = col_slice.stop - col_slice.start
-        area = int(binary[slc].sum())
+        class0_weighted_sum += intensity_threshold * intensity_histogram[intensity_threshold]
+        mean_intensity_class0 = class0_weighted_sum / class0_pixel_count
+        mean_intensity_class1 = (
+            weighted_intensity_sum - class0_weighted_sum
+        ) / class1_pixel_count
+        between_class_variance = (
+            class0_pixel_count
+            * class1_pixel_count
+            * (mean_intensity_class0 - mean_intensity_class1) ** 2
+        )
+        if between_class_variance > best_between_class_variance:
+            best_between_class_variance = between_class_variance
+            best_intensity_threshold = intensity_threshold
 
-        if area < min_area or bw < min_width:
-            continue
-        if area > max_area:
-            continue
-        if bw > bh * 8:
-            continue
-
-        boxes.append((row_slice.start, col_slice.start,
-                      row_slice.stop, col_slice.stop))
-
-    if not boxes:
-        return []
-
-    boxes = _sort_reading_order(boxes, img_height=h)
-
-    crops = []
-    for top, left, bottom, right in boxes:
-        crop = gray[top:bottom, left:right]
-        crops.append(Image.fromarray(crop.astype(np.uint8)))
-
-    return crops
+    # ink dark -> 255 (white strokes), paper -> 0, same convention as training tensors
+    binary_mask = np.where(
+        grayscale_uint8_array <= best_intensity_threshold, 255, 0
+    ).astype(np.uint8)
+    return binary_mask
 
 
-def _sort_reading_order(boxes: list, img_height: int = None) -> list:
-    """Sort boxes into reading order: lines top-to-bottom, chars left-to-right."""
-    if not boxes:
-        return []
+def find_row_ranges(binary_mask, minimum_row_height=8):
+    row_ink_sums = []
+    for row_index in range(binary_mask.shape[0]):
+        row_ink_sums.append(int(np.sum(binary_mask[row_index, :])))
 
-    boxes = sorted(boxes, key=lambda b: b[0])
+    row_index_ranges = []
+    inside_text_band = False
+    text_band_start_row = 0
+    for row_index in range(len(row_ink_sums)):
+        if not inside_text_band and row_ink_sums[row_index] > 0:
+            inside_text_band = True
+            text_band_start_row = row_index
+        elif inside_text_band and row_ink_sums[row_index] == 0:
+            inside_text_band = False
+            if (row_index - text_band_start_row) >= minimum_row_height:
+                row_index_ranges.append((text_band_start_row, row_index))
 
-    heights = [b[2] - b[0] for b in boxes]
-    median_h = sorted(heights)[len(heights) // 2]
-    line_tolerance = median_h * 0.6
+    if inside_text_band and (binary_mask.shape[0] - text_band_start_row) >= minimum_row_height:
+        row_index_ranges.append((text_band_start_row, binary_mask.shape[0]))
 
-    lines = []
-    for box in boxes:
-        top, left, bottom, right = box
-        mid_y = (top + bottom) / 2
-        placed = False
-        for line in lines:
-            line_mid = sum((b[0] + b[2]) / 2 for b in line) / len(line)
-            if abs(mid_y - line_mid) < line_tolerance:
-                line.append(box)
-                placed = True
-                break
-        if not placed:
-            lines.append([box])
-
-    result = []
-    for line in lines:
-        result.extend(sorted(line, key=lambda b: b[1]))
-
-    return result
+    return row_index_ranges
 
 
-def _otsu_threshold(gray: np.ndarray) -> float:
-    hist, _ = np.histogram(gray, bins=256, range=(0, 256))
-    total = gray.size
-    sum_total = float(np.dot(np.arange(256), hist))
-    sum_b = 0.0
-    count_b = 0
-    max_var = 0.0
-    threshold = 128.0
-    for t in range(256):
-        count_b += hist[t]
-        if count_b == 0:
-            continue
-        count_f = total - count_b
-        if count_f == 0:
-            break
-        sum_b += t * hist[t]
-        mean_b = sum_b / count_b
-        mean_f = (sum_total - sum_b) / count_f
-        var = count_b * count_f * (mean_b - mean_f) ** 2
-        if var > max_var:
-            max_var = var
-            threshold = t
-    return threshold
+def find_char_ranges(text_row_binary_strip, minimum_character_width=3):
+    column_ink_sums = []
+    for column_index in range(text_row_binary_strip.shape[1]):
+        column_ink_sums.append(int(np.sum(text_row_binary_strip[:, column_index])))
+
+    column_index_ranges = []
+    inside_character = False
+    character_start_column = 0
+    for column_index in range(len(column_ink_sums)):
+        if not inside_character and column_ink_sums[column_index] > 0:
+            inside_character = True
+            character_start_column = column_index
+        elif inside_character and column_ink_sums[column_index] == 0:
+            inside_character = False
+            if (column_index - character_start_column) >= minimum_character_width:
+                column_index_ranges.append((character_start_column, column_index))
+
+    if inside_character and (
+        text_row_binary_strip.shape[1] - character_start_column
+    ) >= minimum_character_width:
+        column_index_ranges.append(
+            (character_start_column, text_row_binary_strip.shape[1])
+        )
+
+    return column_index_ranges
+
+
+def segment_characters(pil_image):
+    grayscale_uint8_array = np.array(pil_image.convert("L"))
+    binary_mask = binarize(grayscale_uint8_array)
+    text_row_ranges = find_row_ranges(binary_mask)
+
+    character_pil_images = []
+    for row_start_index, row_end_index in text_row_ranges:
+        text_row_binary_strip = binary_mask[row_start_index:row_end_index, :]
+        character_column_ranges = find_char_ranges(text_row_binary_strip)
+
+        for column_start_index, column_end_index in character_column_ranges:
+            character_crop = text_row_binary_strip[
+                :, column_start_index:column_end_index
+            ]
+            border_padding_pixels = 4
+            padded_uint8 = np.zeros(
+                (
+                    character_crop.shape[0] + 2 * border_padding_pixels,
+                    character_crop.shape[1] + 2 * border_padding_pixels,
+                ),
+                dtype=np.uint8,
+            )
+            padded_uint8[
+                border_padding_pixels : border_padding_pixels + character_crop.shape[0],
+                border_padding_pixels : border_padding_pixels + character_crop.shape[1],
+            ] = character_crop
+            character_pil = Image.fromarray(padded_uint8)
+            character_pil = character_pil.resize((28, 28), Image.LANCZOS)
+            character_pil_images.append(character_pil)
+
+    return character_pil_images
