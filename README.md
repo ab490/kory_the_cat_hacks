@@ -69,4 +69,5 @@ With `SimulatedNoisyOffice/` next to the repo, start the OCR server and
 run `python benchmark.py`. Prints average character-match rate between
 each font's clean TE page and its four noisy variants.
 
+## End to End Pipeline implemented:
 <img src="results/entire_pipeline.png" alt="Entire Pipeline">
