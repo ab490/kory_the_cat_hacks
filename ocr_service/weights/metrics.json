@@ -1,0 +1,6 @@
+{
+  "emnist_clean": 0.8965425531914893,
+  "emnist_gaussian": 0.8937234042553192,
+  "emnist_salt_and_pepper": 0.8940957446808511,
+  "printed_clean": 0.9944
+}

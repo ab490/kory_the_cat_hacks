@@ -1,0 +1,9 @@
+torch
+torchvision
+flask
+pillow
+numpy
+scipy
+requests
+tqdm
+huggingface_hub
