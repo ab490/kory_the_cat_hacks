@@ -81,7 +81,7 @@ Noisy Document Image
 pip install -r requirements.txt
 ```
 
-**Data:** Download the three dataset zips from One Drive: [**datasets**](https://YOUR_DRIVE_LINK_HERE)
+**Data:** Download the three dataset zips from One Drive: [**datasets**](https://indiana-my.sharepoint.com/:f:/g/personal/anobajaj_iu_edu/IgCKXF0AFaLMTZMoTI18_dV3AQ_-3rpB_uQiw9D9OjIo89I?e=4Nv1Vz)
 
 ```bash
 mkdir -p data
