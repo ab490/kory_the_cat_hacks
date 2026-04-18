@@ -287,7 +287,7 @@ Trained on paired (noisy, clean) SimulatedNoisyOffice TR images. If the denoised
 - [x] Compression ratio, entropy, and encoding efficiency reported per `/compress` response - see [Compression Metrics](#compression-metrics)
 
 ### Pipeline
-- [x] End-to-end latency benchmarked - see [End-to-End Latency](#end-to-end-latency) (~620 ms total)
+- [x] End-to-end latency benchmarked - see [End-to-End Latency](#end-to-end-latency) (~713 ms total)
 
 ---
 
