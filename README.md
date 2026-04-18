@@ -16,7 +16,6 @@ A two-stage pipeline that ingests a noisy scanned document image, extracts its t
   - [DnCNN Denoiser](#dncnn-denoiser)
 - [Stage 2 - Compression Microservice](#stage-2---compression-microservice)
   - [Compression Metrics](#compression-metrics)
-  - [API](#api)
 - [End-to-End Latency](#end-to-end-latency)
 - [Requirements Checklist](#requirements-checklist)
 - [Team](#team)
@@ -50,8 +49,6 @@ Noisy Document Image
 │   ├── segment.py            # Connected-component character segmentation
 │   ├── train.py              # Train OCRNet on Chars74K + document noise
 │   ├── train_denoiser.py     # Train denoiser on SimulatedNoisyOffice pairs
-│   ├── evaluate.py           # Pipeline accuracy on SimulatedNoisyOffice VA
-│   ├── ocr_run.py            # Run OCR directly on an image (no server)
 │   ├── server.py             # Flask API: POST /ocr, GET /health
 │   └── weights/
 │       ├── ocrnet.pth
@@ -101,9 +98,6 @@ python3 train.py --epochs 50 --batch-size 128
 
 # Step 2 - Train denoiser (~50 epochs)
 python3 train_denoiser.py --data-dir ../data/SimulatedNoisyOffice --epochs 50
-
-# Step 3 - Evaluate pipeline accuracy
-python3 evaluate.py --partition VA
 ```
 
 Pre-trained weights are included in `ocr_service/weights/` - training is only needed to reproduce from scratch.
@@ -122,15 +116,10 @@ cd ocr_service && python3 server.py
 cd compression_service && python3 server.py
 ```
 
-```bash
-curl http://localhost:5001/health
-curl http://localhost:5002/health
-```
-
 ### End-to-end pipeline
 
 ```bash
-python3 pipeline.py --image data/SimulatedNoisyOffice/simulated_noisy_images_grayscale/Fontfre_Noisec_TE.png
+python3 pipeline.py --image <path_to_image>
 ```
 
 ---
@@ -247,42 +236,18 @@ Trained on paired (noisy, clean) SimulatedNoisyOffice TR images. If the denoised
 
 ## Stage 2 - Compression Microservice
 
-`compression_service/huffman.py` - Vitter's adaptive Huffman algorithm, from scratch.
+`compression_service/huffman.py` - Vitter-style adaptive Huffman from scratch. Encoder and decoder build the same tree symbol-by-symbol as data is processed - no frequency pre-scan, no transmitted frequency table. New symbols emit NYT (not-yet-transmitted) path + 8-bit ASCII; seen symbols emit their current Huffman code.
 
-### Compression Metrics
+### Compression Metrics Results
 
-| Metric | Formula | Meaning |
-|---|---|---|
-| Compression ratio | `original_bits / compressed_bits` | >1.0 means file is smaller |
-| Entropy | `-Σ p(c) log₂ p(c)` | Theoretical minimum bits per symbol (Shannon) |
-| Avg bits/symbol | `compressed_bits / num_chars` | Actual bits used per character |
-| Encoding efficiency | `entropy / avg_bits_per_symbol` | 1.0 = theoretically optimal |
-
-### API
-
-**POST /compress**
-```json
-Request:  {"text": "Hello World"}
-Response: {
-  "data": "a3f04c...",
-  "bit_length": 89,
-  "metrics": {
-    "original_bytes": 11,
-    "compressed_bytes": 12,
-    "compression_ratio": 0.733,
-    "entropy_bits_per_symbol": 3.095,
-    "avg_bits_per_symbol": 8.0,
-    "encoding_efficiency": 0.387
-  },
-  "latency_ms": 0.04
-}
-```
-
-**POST /decompress**
-```json
-Request:  {"data": "a3f04c...", "bit_length": 89}
-Response: {"text": "Hello World", "latency_ms": 0.03}
-```
+| Metric | Value |
+|---|---|
+| Original bytes | 478 |
+| Compressed bytes | 1073 |
+| Compression ratio | 0.4456 |
+| Entropy (bits/sym) | 4.6561 |
+| Avg bits/symbol | 17.9519 |
+| Encoding efficiency | 0.2594 |
 
 ---
 
@@ -302,7 +267,7 @@ Response: {"text": "Hello World", "latency_ms": 0.03}
 
 ## Requirements Checklist
 
-### Stage 1 — OCR Microservice (CNN)
+### Stage 1 - OCR Microservice (CNN)
 - [x] CNN built and trained from scratch using PyTorch (no pretrained models)
 - [x] `POST /ocr` endpoint accepts an image and returns extracted text
 - [x] Two noise profiles supported with measurable accuracy on each:
@@ -313,17 +278,16 @@ Response: {"text": "Hello World", "latency_ms": 0.03}
 | Gaussian | 88.77% |
 | Salt-and-pepper | 89.24% |
 
-- [x] CNN architecture documented with diagram and design justification — see [OCRNet Architecture](#ocrnet-architecture)
+- [x] CNN architecture documented with diagram and design justification - see [OCRNet Architecture](#ocrnet-architecture)
 
-### Stage 2 — Compression Microservice (Adaptive Huffman)
-- [x] Adaptive Huffman implemented entirely from scratch (no zlib/gzip/compression libs)
+### Stage 2 - Compression Microservice (Adaptive Huffman)
+- [x] Adaptive Huffman implemented entirely from scratch
 - [x] `POST /compress` and `POST /decompress` endpoints implemented
 - [x] Lossless decompression verified (`recovered == original` assert in `pipeline.py`)
-- [x] Compression ratio, entropy, and encoding efficiency reported per `/compress` response — see [Compression Metrics](#compression-metrics)
+- [x] Compression ratio, entropy, and encoding efficiency reported per `/compress` response - see [Compression Metrics](#compression-metrics)
 
 ### Pipeline
-- [x] End-to-end latency benchmarked — see [End-to-End Latency](#end-to-end-latency) (~620 ms total)
-- [ ] Demo video (image in → compressed output → decompressed text)
+- [x] End-to-end latency benchmarked - see [End-to-End Latency](#end-to-end-latency) (~620 ms total)
 
 ---
 
